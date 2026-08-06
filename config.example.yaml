@@ -1,0 +1,19 @@
+# Didebaan example configuration.
+#
+# Copy to /etc/didebaan/config.yaml (the default search path) or pass with
+# --config PATH. Every key below can be overridden by a DIDEBAAN_* environment
+# variable and, in turn, by a command-line flag: file < env < flag.
+#
+# Keys match the flag names (dashes preserved). See `didebaan --help`.
+
+# Which input adapter to collect from. Run `didebaan adapters` to list the
+# adapters compiled into the binary. The first adapter is claude-code (ADR 0003).
+adapter: claude-code
+
+# OTLP/gRPC endpoint of the downstream collector (host:port). Leave empty to
+# fall back to the OpenTelemetry SDK's OTEL_EXPORTER_OTLP_* env defaults.
+otlp-endpoint: localhost:4317
+
+# Use plaintext gRPC instead of TLS. Suitable only for a local collector on the
+# loopback interface; keep false when the endpoint is remote.
+otlp-insecure: false

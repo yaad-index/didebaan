@@ -1,0 +1,15 @@
+# VCS + CI
+.git
+.github
+
+# Local env / secrets — must never enter the build context or image layers
+.env
+*.env
+
+# Local build output
+/didebaan
+/dist
+
+# Compose + tests not needed to build the binary
+docker-compose.yml
+*_test.go
