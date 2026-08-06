@@ -1,0 +1,28 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          # Use a PAT instead of the default GITHUB_TOKEN. Events made with
+          # GITHUB_TOKEN do not trigger further workflows (GitHub's
+          # anti-recursion rule), which would suppress two things: the release
+          # PR's CI would never run (so the required check would be absent and
+          # the PR could not merge without an admin override), and the release
+          # tag would not fire the image publish. A PAT acts as a real account,
+          # so the release PR gets its CI run and the tag triggers tag-gated
+          # workflows.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          release-type: go
+          # No custom release-rules — the action's defaults match the
+          # standard conventional-commits type→bump table.
