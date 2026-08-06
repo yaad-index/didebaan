@@ -10,27 +10,36 @@ import (
 	"github.com/yaad-index/didebaan/pkg/didebaan"
 )
 
-// newSink returns a Sink that records each normalized event as a span carrying
-// its gen_ai.* attributes, exported through providers. This is the v1 wiring
-// from a normalized event to an OpenTelemetry signal; the metric and log signals
-// (ADR 0002) are wired in a follow-up.
-func newSink(providers *exporter.Providers) didebaan.Sink {
-	tracer := providers.Tracer.Tracer("github.com/yaad-index/didebaan")
+// instrumentationScope names Didebaan as the source of the telemetry it emits.
+const instrumentationScope = "github.com/yaad-index/didebaan"
+
+// newSink returns a Sink that maps each normalized event onto all three
+// OpenTelemetry signals (ADR 0002) through providers: a trace span carrying the
+// gen_ai.* attributes, the GenAI metric instruments (token usage + operation
+// duration), and a structured log record (the activity feed). The genai package
+// owns every attribute and instrument name; this only wires the providers to it.
+func newSink(providers *exporter.Providers) (didebaan.Sink, error) {
+	tracer := providers.Tracer.Tracer(instrumentationScope)
+	logger := providers.Logger.Logger(instrumentationScope)
+	instruments, err := genai.NewInstruments(providers.Meter.Meter(instrumentationScope))
+	if err != nil {
+		return nil, err
+	}
+
 	return func(ctx context.Context, e didebaan.Event) error {
-		_, span := tracer.Start(ctx, spanName(e),
+		// Traces: one span per operation, spanning its duration.
+		_, span := tracer.Start(ctx, genai.SpanName(e),
 			trace.WithTimestamp(e.Timestamp),
 			trace.WithAttributes(genai.Attributes(e)...),
 		)
 		span.End(trace.WithTimestamp(e.Timestamp.Add(e.Duration)))
-		return nil
-	}
-}
 
-// spanName derives a span name from the event's operation, falling back to a
-// generic label when the adapter did not report one.
-func spanName(e didebaan.Event) string {
-	if e.Operation != "" {
-		return e.Operation
-	}
-	return "gen_ai.operation"
+		// Metrics: token usage + operation duration.
+		instruments.Record(ctx, e)
+
+		// Logs: a structured activity-feed record.
+		logger.Emit(ctx, genai.LogRecord(e))
+
+		return nil
+	}, nil
 }

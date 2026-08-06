@@ -80,10 +80,13 @@ func (*CollectCmd) Run(cli *CLI) error {
 
 	fmt.Fprintf(os.Stderr, "didebaan: collecting from %q, exporting over OTLP\n", ad.Name())
 
-	// The sink is where normalized events become OTel signals; the real mapping
-	// across all three signals is wired in a follow-up. The stub adapter emits
-	// nothing yet, so this simply blocks until interrupted.
-	sink := newSink(providers)
+	// The sink is where normalized events become OTel signals (traces, metrics,
+	// logs). The stub adapter emits nothing yet, so this simply blocks until
+	// interrupted.
+	sink, err := newSink(providers)
+	if err != nil {
+		return fmt.Errorf("wire sink: %w", err)
+	}
 	if err := ad.Run(ctx, sink); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("adapter %q: %w", ad.Name(), err)
 	}
