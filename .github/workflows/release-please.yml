@@ -14,15 +14,21 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          # Use a PAT instead of the default GITHUB_TOKEN. Events made with
-          # GITHUB_TOKEN do not trigger further workflows (GitHub's
-          # anti-recursion rule), which would suppress two things: the release
-          # PR's CI would never run (so the required check would be absent and
-          # the PR could not merge without an admin override), and the release
-          # tag would not fire the image publish. A PAT acts as a real account,
-          # so the release PR gets its CI run and the tag triggers tag-gated
-          # workflows.
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          # Prefer a PAT (RELEASE_PLEASE_TOKEN) over the built-in GITHUB_TOKEN.
+          # Events made with GITHUB_TOKEN do not trigger further workflows
+          # (GitHub's anti-recursion rule), which would suppress two things: the
+          # release PR's CI would never run (so the required check would be
+          # absent and the PR could not merge without an admin override), and
+          # the release tag would not fire the image publish. A PAT acts as a
+          # real account, so the release PR gets its CI run and the tag triggers
+          # tag-gated workflows.
+          #
+          # Until that secret is provisioned, fall back to GITHUB_TOKEN so the
+          # job runs instead of hard-failing on an empty token input. The
+          # fallback's only trade-off is exactly the anti-recursion limit above
+          # (a GITHUB_TOKEN-authored release PR won't itself trigger CI); it is
+          # resolved once the PAT is set.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           release-type: go
           # No custom release-rules — the action's defaults match the
           # standard conventional-commits type→bump table.
