@@ -46,9 +46,11 @@ agent ([ADR 0007](adr/0007-read-only-collection-v1.md)).
 
 ## Status
 
-Early scaffold. The collector's structure, adapter interface, registry, and OTLP
-export wiring are in place, with a Claude Code adapter stub; real ingest and the
-full signal mapping land in follow-ups.
+Early stage. The collector's structure, adapter interface, registry, OTLP export
+wiring, and the full `gen_ai.*` mapping across all three signals (traces,
+metrics, logs) are in place. The Claude Code adapter is still a stub — real
+ingest of an agent's activity lands in a follow-up, at which point events flow
+end to end.
 
 ## Quick start
 
