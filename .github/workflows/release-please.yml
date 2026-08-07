@@ -29,6 +29,9 @@ jobs:
           # (a GITHUB_TOKEN-authored release PR won't itself trigger CI); it is
           # resolved once the PAT is set.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          release-type: go
-          # No custom release-rules — the action's defaults match the
-          # standard conventional-commits type→bump table.
+          # Drive release-please from committed files rather than inline inputs:
+          # the config file pins the release type and the pre-1.0 versioning
+          # policy (bump-minor-pre-major), and the manifest tracks the current
+          # version. This keeps the first release at 0.1.0 instead of 1.0.0.
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
