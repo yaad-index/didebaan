@@ -35,8 +35,10 @@ once in one process, so a receiver per adapter would have N adapters contending
 for one port and failing at run time rather than at config validation.
 
 **Routing is part of this decision, because it defines the adapter interface:**
-each adapter declares which incoming telemetry it claims, by instrumentation
-scope name and metric/log namespace prefix (Claude Code claims `claude_code.*`).
+each adapter declares which incoming telemetry it claims. Metrics and logs are
+claimed by namespace prefix (Claude Code claims `claude_code.*`); **spans are
+claimed by instrumentation scope**, since a span is neither a metric nor a log
+name and the agent's beta spans carry `gen_ai.*` rather than `claude_code.*`.
 The receiver dispatches each record to the claiming adapter. Records no adapter
 claims are dropped and counted, never guessed at.
 
@@ -50,11 +52,23 @@ exporter because the agent's defaults are the ones we do not control — an agen
 pointed at its own default endpoint must find the collector with no extra
 configuration.
 
-⚠️ **Consequently the downstream export default must not be `localhost:4317`.**
-The current documentation uses exactly that as the export example, which combined
-with a conventional receiver default would make the collector export into its own
-receiver. Changing that default and its documentation is part of implementing
-this ADR, not a follow-up.
+⚠️ **Consequently the collector must refuse to start when the resolved export
+endpoint equals its own listening address.** The current documentation uses
+`localhost:4317` as the export example, which against a conventional receiver
+default would make the collector export into its own receiver.
+
+**The constraint binds the *resolved* endpoint, not the documented one**, because
+two ways of complying literally still land on the collision:
+- Removing the configured default looks like the minimal fix, but an empty
+  endpoint falls back to the SDK's environment defaults, and the OTLP default is
+  `localhost:4317`. Compliance on paper, loop in practice.
+- More likely still, the agent is pointed at the collector *by* exporting
+  `OTEL_EXPORTER_OTLP_ENDPOINT`, so any process inheriting that environment
+  resolves to the receiver through the same fallback. The loop would then depend
+  on how a process was launched rather than on any file anyone reviewed.
+
+A startup refusal turns a silent feedback loop into an error at the one moment
+someone is watching.
 
 **4. v1 ingests the agent's metrics and logs/events. Ingesting the agent's own
 span tree stays behind a flag,** because those spans are beta in the agent and
@@ -62,10 +76,20 @@ behind a separate opt-in there, so their shape can still change.
 
 This gates *ingest only*. It is not a statement that v1 has no traces: the
 collector already synthesizes one span per normalized event, unconditionally, and
-that continues. **When agent span ingest is enabled, synthesis is suppressed for
-events derived from those spans**, so a single operation is represented once
-rather than as two unrelated traces with no parent link and a double-counted
-duration.
+that continues.
+
+**The duplicate does not come from the ingested spans; it comes from the event
+path.** An `api_request` event becomes a normalized event and the sink
+synthesizes a span from it. Switch span ingest on and the same call is
+represented twice: the agent's own `llm_request` span, plus a synthetic span
+built from that call's `api_request` event.
+
+**So suppression is keyed on the operation, not on provenance: synthesis is
+skipped for any event describing an operation whose span was ingested**, matched
+on the agent's correlation keys (`prompt.id`, `message.uuid`,
+`client_request_id`). Keying on provenance instead would be vacuous in exactly
+the state it exists for — under pass-through, ingested spans never become events,
+so nothing would ever be "derived from" them and nothing would be suppressed.
 
 **5. Cost is emitted as `didebaan.cost.usage`, in the project's own `didebaan.*`
 namespace** (the collector already emits `didebaan.agent`). The GenAI semantic
