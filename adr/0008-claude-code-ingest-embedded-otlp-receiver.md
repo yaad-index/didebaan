@@ -88,10 +88,19 @@ represented twice: the agent's own `llm_request` span, plus a synthetic span
 built from that call's `api_request` event.
 
 **So suppression is keyed on the operation, not on provenance: synthesis is
-skipped for any event describing an operation whose span was ingested**, matched
-on **`client_request_id`**. That is the only correlation key carried on both
-sides: `prompt.id` and `message.uuid` are events-only and never appear on spans,
-so naming them would leave the rule undecidable on two of its three keys.
+skipped for any event describing an operation whose span was ingested.** The
+matching key is **per operation class**, because no single key joins every pair:
+
+| Operation class | Joining key | Notes |
+|---|---|---|
+| Model call | `client_request_id` | On `llm_request` spans and `api_request` events. |
+| Tool call | `gen_ai.tool.call.id` / `tool_use_id` | `client_request_id` is on `tool.execution` spans but **not** on `tool_result` / `tool_decision` events, so it cannot join this pair. |
+| *(future classes)* | *(unfilled)* | A new operation type must appear here as a blank row before it is assumed covered. |
+
+The table is deliberate rather than a list: **a rule with one key looks complete,
+whereas a table with one row filled and the rest empty does not.** `prompt.id` and
+`message.uuid` are events-only and never appear on spans, so they cannot serve as
+joining keys at all.
 
 Keying on provenance instead would be vacuous in exactly the state it exists for
 — under pass-through, ingested spans never become events, so nothing would ever
