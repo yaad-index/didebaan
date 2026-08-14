@@ -4,7 +4,7 @@ Didebaan records its significant decisions as ADRs. Each file is one decision:
 its context, the decision, and the consequences. ADRs are immutable once
 Accepted — to change one, add a new ADR that supersedes it.
 
-These records (0000–0007) capture the initial design of Didebaan as an
+These records (0000–0008) capture the initial design of Didebaan as an
 agent-agnostic telemetry collector: what it is (and is not), the schema and
 protocol it adopts, how agents plug in, and the read-only scope of v1.
 
@@ -18,3 +18,4 @@ protocol it adopts, how agents plug in, and the read-only scope of v1.
 | [0005](0005-go-and-mit.md) | Go (latest stable), MIT license |
 | [0006](0006-prefer-established-libraries.md) | Prefer established libraries over reinventing |
 | [0007](0007-read-only-collection-v1.md) | Read-only collection in v1; bidirectional control deferred |
+| [0008](0008-claude-code-ingest-embedded-otlp-receiver.md) | Claude Code ingest is an embedded OTLP receiver |
