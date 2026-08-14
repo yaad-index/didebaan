@@ -68,7 +68,10 @@ two ways of complying literally still land on the collision:
   on how a process was launched rather than on any file anyone reviewed.
 
 A startup refusal turns a silent feedback loop into an error at the one moment
-someone is watching.
+someone is watching. **The comparison is on resolved addresses, not strings:**
+`localhost:4317`, `127.0.0.1:4317` and `[::1]:4317` are one socket and compare
+unequal as text, and once the all-interfaces opt-in is used the right relation is
+containment rather than equality.
 
 **4. v1 ingests the agent's metrics and logs/events. Ingesting the agent's own
 span tree stays behind a flag,** because those spans are beta in the agent and
@@ -86,10 +89,18 @@ built from that call's `api_request` event.
 
 **So suppression is keyed on the operation, not on provenance: synthesis is
 skipped for any event describing an operation whose span was ingested**, matched
-on the agent's correlation keys (`prompt.id`, `message.uuid`,
-`client_request_id`). Keying on provenance instead would be vacuous in exactly
-the state it exists for — under pass-through, ingested spans never become events,
-so nothing would ever be "derived from" them and nothing would be suppressed.
+on **`client_request_id`**. That is the only correlation key carried on both
+sides: `prompt.id` and `message.uuid` are events-only and never appear on spans,
+so naming them would leave the rule undecidable on two of its three keys.
+
+Keying on provenance instead would be vacuous in exactly the state it exists for
+— under pass-through, ingested spans never become events, so nothing would ever
+be "derived from" them and nothing would be suppressed.
+
+**Intended edge:** the span carries `client_request_id` from the final attempt
+while `api_request` events are per-attempt, so on a retried call the earlier
+attempts still synthesize spans. That is deliberate: a retried attempt is a real,
+separately-timed operation that the ingested span does not represent.
 
 **5. Cost is emitted as `didebaan.cost.usage`, in the project's own `didebaan.*`
 namespace** (the collector already emits `didebaan.agent`). The GenAI semantic
@@ -101,9 +112,28 @@ the extension name may be dropped in any minor release, called out in the
 changelog, since minor is the breaking vehicle before 1.0. Post-1.0 it is kept as
 an alias for one minor cycle.**
 
-**6. Content stays redacted by default.** The collector must never require the
-agent's prompt or response logging to be switched on in order to function.
-Capturing content is an explicit operator choice, never a Didebaan prerequisite.
+**6. Content stays redacted by default, and identity attributes are dropped at
+the adapter boundary by default.** The collector must never require the agent's
+prompt or response logging to be switched on in order to function. Capturing
+content is an explicit operator choice, never a Didebaan prerequisite.
+
+⚠️ **Redacting content is not sufficient, because identity does not travel in the
+content.** The agent attaches a standard attribute set to every metric, event and
+span whenever telemetry is enabled: `user.email`, `user.id`, `user.account_uuid`,
+`user.account_id`, `organization.id`, `terminal.type`. **`user.email` and
+`user.id` are documented as never gated** — no content-redaction flag suppresses
+them. A collector that only honoured content redaction would therefore ingest a
+personal email address on every record and re-export it to an
+operator-chosen backend **by default**, while reporting its privacy posture as
+satisfied.
+
+**So the adapter drops the identity attributes by default; forwarding them is an
+explicit opt-in**, the same shape this decision already uses for content.
+**`session.id` is retained**, because it is what makes telemetry groupable and it
+carries no personal content.
+
+This applies across all three signals and to v1, not only to the flagged trace
+path — the attribute set is shared, so the boundary is the right place for it.
 
 ## Consequences
 - No dependency on any private transcript format, and ingest inherits OTLP's own
@@ -118,6 +148,9 @@ Capturing content is an explicit operator choice, never a Didebaan prerequisite.
   suppression rule that keeps one operation from being represented twice.
 - The cost metric will need a rename when the conventions catch up; pre-1.0 that
   is a changelog entry rather than a migration window.
+- Dropping identity attributes costs per-user attribution downstream unless the
+  operator opts in. That is the intended default: an operator who wants it can
+  say so, whereas a personal email exported by default cannot be un-exported.
 - Agents that export nothing will still need a different adapter shape. This ADR
   decides the Claude Code path, not a universal ingest rule.
 
