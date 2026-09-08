@@ -23,15 +23,18 @@ jobs:
           # real account, so the release PR gets its CI run and the tag triggers
           # tag-gated workflows.
           #
-          # Until that secret is provisioned, fall back to GITHUB_TOKEN so the
-          # job runs instead of hard-failing on an empty token input. The
-          # fallback's only trade-off is exactly the anti-recursion limit above
-          # (a GITHUB_TOKEN-authored release PR won't itself trigger CI); it is
-          # resolved once the PAT is set.
+          # The PAT is provisioned. The fallback stays as a guard against the
+          # secret being absent, in which case the job runs degraded rather than
+          # hard-failing on an empty token input, and the trade-off is exactly
+          # the anti-recursion limit above.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           # Drive release-please from committed files rather than inline inputs:
           # the config file pins the release type and the pre-1.0 versioning
-          # policy (bump-minor-pre-major), and the manifest tracks the current
-          # version. This keeps the first release at 0.1.0 instead of 1.0.0.
+          # policy, and the manifest tracks the current version.
+          #
+          # bump-minor-pre-major is what keeps a feat below 1.0.0 while the
+          # manifest reads 0.x. It did NOT produce the first release: that was a
+          # release-as pin, removed in this change once it had done its job and
+          # started forcing every later release to the same version.
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
