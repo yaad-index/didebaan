@@ -177,6 +177,23 @@ func New(cfg Config, m metric.Meter, consumers ...Consumer) (*Receiver, error) {
 	if len(consumers) == 0 {
 		return nil, errors.New("receiver: no consumers, so every record would be unclaimed")
 	}
+	// ADR 0008 §2: every signal is claimed by instrumentation scope, and a name
+	// prefix is an additional claim rather than a sole one.
+	//
+	// This is validated rather than documented because the failure it prevents is
+	// silent. A Claim declaring only MetricPrefixes dispatches correctly for as
+	// long as the agent namespaces everything, and stops matching the moment it
+	// meets one that does not — which is the case the rule exists for, and the
+	// case where the missing records are the token and cost figures. Nothing
+	// downstream reports a gap: the records are counted as unclaimed and the
+	// health counters stay green.
+	for _, c := range consumers {
+		if len(c.Claim().ScopePrefixes) == 0 {
+			return nil, fmt.Errorf(
+				"receiver: adapter %q declares no ScopePrefixes; a name prefix cannot be an adapter's only claim, "+
+					"because an agent may emit records with no namespace at all (ADR 0008 §2)", c.Name())
+		}
+	}
 	unclaimed, err := m.Int64Counter(
 		"didebaan.receiver.unclaimed",
 		metric.WithUnit("{record}"),
