@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/yaad-index/didebaan/internal/adapter"
 	"github.com/yaad-index/didebaan/internal/receiver"
@@ -68,6 +69,15 @@ type Adapter struct {
 	sink didebaan.Sink
 
 	warnInstanceOnce warnOnce
+
+	// sawLog records whether any log event has ever been consumed, and
+	// skippedAggregates counts pre-aggregated token/cost metrics dropped
+	// because the event path is the measurement. Together they detect the
+	// metrics-only configuration, in which no token or cost figure is produced
+	// at all. See warnIfMetricsOnly.
+	sawLog              atomic.Bool
+	skippedAggregates   atomic.Int64
+	warnMetricsOnlyOnce warnOnce
 }
 
 // New constructs the Claude Code adapter. The only recognised configuration key

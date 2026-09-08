@@ -73,6 +73,7 @@ func (a *Adapter) ConsumeMetric(ctx context.Context, rec receiver.MetricRecord) 
 	switch name {
 	case metricTokenUsage, metricCostUsage:
 		// See the doc comment: measured on the event path instead.
+		a.warnIfMetricsOnly()
 		return nil
 	case metricActiveTime:
 		return a.emitDataPoints(ctx, rec, name)
@@ -145,6 +146,8 @@ func (a *Adapter) ConsumeLog(ctx context.Context, rec receiver.LogRecord) error 
 		operation = operationChat
 	}
 
+	a.sawLog.Store(true)
+
 	e := a.newEvent(a.instanceFrom(rec.Resource), operation, timeFromUnixNano(logTime(rec.Log)))
 	e.Attributes = a.scrubbedAttrs(attrs)
 
@@ -166,6 +169,39 @@ func (a *Adapter) ConsumeLog(ctx context.Context, rec receiver.LogRecord) error 
 	}
 
 	return a.emit(ctx, e)
+}
+
+// metricsOnlyGrace is how many pre-aggregated token/cost metrics may be skipped
+// with no log event yet seen before the metrics-only warning fires. It is not
+// zero because a metrics export legitimately arrives before the first model call
+// on a freshly started agent, and a warning that cries wolf at startup is one
+// nobody reads by the time it is true.
+const metricsOnlyGrace = 3
+
+// warnIfMetricsOnly reports the configuration in which the agent exports its
+// metrics but not its logs.
+//
+// That combination produces no token or cost figures whatsoever: the aggregates
+// are deliberately not recorded because the event path is the measurement, and
+// the event path is not running. Without this it is the quietest possible
+// failure — records arrive, dimensions populate, the activity feed fills from
+// the other metrics, and only the two numbers anyone actually asked for are
+// missing.
+func (a *Adapter) warnIfMetricsOnly() {
+	if a.sawLog.Load() {
+		return
+	}
+	if a.skippedAggregates.Add(1) < metricsOnlyGrace {
+		return
+	}
+	a.warnMetricsOnlyOnce.Do(func() {
+		_, _ = fmt.Fprintf(stderr,
+			"didebaan: WARNING: receiving %s/%s metrics but no log events, so NO token or cost data is being produced. "+
+				"These pre-aggregated metrics are not recorded, because the same numbers arrive per-operation on the "+
+				"api_request event and recording both would double-count. Set OTEL_LOGS_EXPORTER=otlp in the agent's "+
+				"environment to enable the event path.\n",
+			metricTokenUsage, metricCostUsage)
+	})
 }
 
 // errUnsupportedMetricShape reports a metric aggregation this adapter does not

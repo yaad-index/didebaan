@@ -382,3 +382,74 @@ func TestNonNumericStringIsNotAZero(t *testing.T) {
 	require.Len(t, *got, 1)
 	assert.Nil(t, (*got)[0].CostUSD)
 }
+
+// TestMetricsOnlyConfigurationIsLoud covers the quietest failure this design
+// has. With the agent exporting metrics but not logs, the pre-aggregated token
+// and cost sums are skipped (the event path is the measurement) and the event
+// path is not running — so no token or cost figure is produced at all, while
+// records keep arriving and every other metric still populates.
+func TestMetricsOnlyConfigurationIsLoud(t *testing.T) {
+	var buf bytes.Buffer
+	old := stderr
+	stderr = &buf
+	t.Cleanup(func() { stderr = old })
+
+	a, got := running(t, nil)
+
+	agg := func(name string) receiver.MetricRecord {
+		return receiver.MetricRecord{
+			Resource: resource(kv("service.instance.id", str("host-one"))),
+			Metric: &metricspb.Metric{
+				Name: name,
+				Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
+					DataPoints: []*metricspb.NumberDataPoint{{
+						TimeUnixNano: 1,
+						Value:        &metricspb.NumberDataPoint_AsInt{AsInt: 10},
+					}},
+				}},
+			},
+		}
+	}
+
+	for i := 0; i < metricsOnlyGrace; i++ {
+		require.NoError(t, a.ConsumeMetric(context.Background(), agg(metricTokenUsage)))
+	}
+
+	assert.Empty(t, *got, "the aggregates are still not recorded")
+	assert.Contains(t, buf.String(), "NO token or cost data",
+		"the metrics-only configuration must announce itself")
+	assert.Contains(t, buf.String(), "OTEL_LOGS_EXPORTER",
+		"the warning must name the setting that fixes it")
+}
+
+// TestMetricsOnlyWarningDoesNotCryWolf: a metrics export legitimately arrives
+// before the first model call on a freshly started agent. A warning that fires
+// then is one nobody reads by the time it is true.
+func TestMetricsOnlyWarningDoesNotCryWolf(t *testing.T) {
+	var buf bytes.Buffer
+	old := stderr
+	stderr = &buf
+	t.Cleanup(func() { stderr = old })
+
+	a, _ := running(t, nil)
+
+	// One aggregate arrives first, then the event path proves it is alive.
+	rec := receiver.MetricRecord{
+		Resource: resource(kv("service.instance.id", str("host-one"))),
+		Metric: &metricspb.Metric{
+			Name: metricTokenUsage,
+			Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
+				DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: 1}},
+			}},
+		},
+	}
+	require.NoError(t, a.ConsumeMetric(context.Background(), rec))
+	require.NoError(t, a.ConsumeLog(context.Background(), apiRequestLog()))
+
+	for i := 0; i < metricsOnlyGrace+2; i++ {
+		require.NoError(t, a.ConsumeMetric(context.Background(), rec))
+	}
+
+	assert.NotContains(t, buf.String(), "NO token or cost data",
+		"a healthy configuration must not be warned about")
+}
