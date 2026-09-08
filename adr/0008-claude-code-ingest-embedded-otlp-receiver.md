@@ -35,12 +35,35 @@ once in one process, so a receiver per adapter would have N adapters contending
 for one port and failing at run time rather than at config validation.
 
 **Routing is part of this decision, because it defines the adapter interface:**
-each adapter declares which incoming telemetry it claims. Metrics and logs are
-claimed by namespace prefix (Claude Code claims `claude_code.*`); **spans are
-claimed by instrumentation scope**, since a span is neither a metric nor a log
-name and the agent's beta spans carry `gen_ai.*` rather than `claude_code.*`.
-The receiver dispatches each record to the claiming adapter. Records no adapter
-claims are dropped and counted, never guessed at.
+each adapter declares which incoming telemetry it claims. **Every signal is
+claimed by instrumentation scope; a name prefix is an additional claim an
+adapter may declare, never its only one.** The receiver dispatches each record
+to the claiming adapter. Records no adapter claims are dropped and counted,
+never guessed at.
+
+🚨 **This rule was widened after the implementation disproved the original one,
+which said metrics and logs are claimed by namespace prefix.** Measured against
+a live agent (Claude Code 2.1.258): metrics do carry `claude_code.*`, but **log
+events carry no namespace at all** — `api_request`, `user_prompt`,
+`assistant_response`, `mcp_server_connection`. A namespace claim over those
+matches nothing.
+
+**The consequence is why this is recorded rather than quietly fixed in code: the
+event path is where token and cost figures live**, so a prefix-only claim would
+have dropped every one of them while the receiver's ingest counters, the
+activity feed and the metric dimensions all read healthy. **The spec was wrong
+in the direction that produces no error.**
+
+⚠️ **Claiming those events by their bare names instead is worse than losing
+them.** `api_request` is a name any agent might emit, so a bare-name claim would
+route another agent's events into Claude Code's normalization rules — silent
+corruption in place of a visible gap.
+
+🔑 **The scope is the emitting library's own identity, which makes it the one
+identifier an agent cannot leave off**; a name prefix is a convention the agent
+may simply not follow, and here it does not. **Span claims match the scope
+exactly rather than by prefix**, because a scope name is an identity and not a
+namespace that nests.
 
 **3. The receiver binds to loopback by default, on the conventional OTLP ports**
 (`127.0.0.1:4317` gRPC, `127.0.0.1:4318` HTTP). Listening on all interfaces is an
@@ -102,6 +125,35 @@ whereas a table with one row filled and the rest empty does not.** `prompt.id` a
 `message.uuid` are events-only and never appear on spans, so they cannot serve as
 joining keys at all.
 
+### The second double-count axis: pre-aggregated metrics against per-operation events
+
+The table above governs *ingested span against synthesized span*. A second,
+independent double count exists on the metric side, and it is decided the same
+way — **once, in favour of the per-operation record.**
+
+| Double count | Records dropped | Kept because |
+|---|---|---|
+| Span against synthetic span | Synthesis skipped per the table above | The ingested span is the agent's own timing. |
+| `claude_code.token.usage` / `claude_code.cost.usage` against `api_request` | **The pre-aggregated metrics** | The event carries the dimensions the aggregate has already collapsed, and the event model is per-operation to begin with. |
+
+**The aggregate is a restatement of the events, so recording both would count
+every token twice.**
+
+⚠️ **This creates one configuration that produces no token or cost data at all,
+and it is not an obviously broken one:** an operator who enables the agent's
+metrics but not its logs (`OTEL_LOGS_EXPORTER` unset) gets aggregates that are
+deliberately not recorded and an event path that is not running. **Records
+arrive, dimensions populate, the activity feed fills from the other metrics, and
+only the two numbers anyone actually asked for are missing** — the quietest
+possible failure.
+
+**So the adapter must warn when it has skipped pre-aggregated token or cost
+metrics and has never seen a log event**, naming the environment variable that
+fixes it. A grace count before warning keeps a slow-starting log exporter from
+tripping it. **The warning is part of the decision, not an implementation
+detail: the decision to drop the aggregates is what creates the silent state, so
+the same decision owes it a voice.**
+
 Keying on provenance instead would be vacuous in exactly the state it exists for
 — under pass-through, ingested spans never become events, so nothing would ever
 be "derived from" them and nothing would be suppressed.
@@ -149,8 +201,12 @@ path — the attribute set is shared, so the boundary is the right place for it.
   compatibility guarantees rather than needing a bespoke parser per agent version.
 - Receiving is inherently read-only, so ADR 0007 holds here with no extra
   machinery.
-- The adapter interface gains a claim declaration (scope/namespace), and the
-  collector gains a dispatch step and a counter for unclaimed records.
+- The adapter interface gains a claim declaration (scope, plus optional name
+  prefixes), and the collector gains a dispatch step and a counter for unclaimed
+  records.
+- An agent that namespaces neither its metrics nor its events is still claimable,
+  because the scope claim does not depend on the agent following any naming
+  convention.
 - A listening port becomes part of the deployment surface, and the documented
   downstream export default has to move off `localhost:4317` in the same change.
 - Two ingest paths (with and without agent spans) must be tested, including the
