@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/yaad-index/didebaan/compare/v0.1.0...v0.2.0) (2026-09-08)
+
+
+### Features
+
+* ingest Claude Code telemetry through an embedded OTLP receiver ([#14](https://github.com/yaad-index/didebaan/issues/14)) ([dfb5230](https://github.com/yaad-index/didebaan/commit/dfb5230b4eabdd9f4d092714b1e3da5aef323d22))
+
 ## 0.1.0 (2026-09-07)
 
 
