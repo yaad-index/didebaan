@@ -32,9 +32,14 @@ jobs:
           # the config file pins the release type and the pre-1.0 versioning
           # policy, and the manifest tracks the current version.
           #
-          # bump-minor-pre-major is what keeps a feat below 1.0.0 while the
-          # manifest reads 0.x. It did NOT produce the first release: that was a
-          # release-as pin, removed in this change once it had done its job and
-          # started forcing every later release to the same version.
+          # bump-minor-pre-major governs BREAKING changes, not features: per
+          # release-please's config schema it means "breaking changes only bump
+          # semver minor if version < 1.0.0". So it is what stops a breaking
+          # change jumping this repo to 1.0.0; a feat on a 0.x manifest bumps
+          # the minor with or without it.
+          #
+          # Neither key produced the first release. That was a release-as pin,
+          # removed once it had done its job and started forcing every later
+          # release to the same version.
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
