@@ -42,12 +42,16 @@ const AttrSessionID = "session.id"
 
 // AttrSubagentName is Claude Code's agent.name, renamed on the way through.
 //
-// ⚠️ The rename is the point. Claude Code's agent.name is the *subagent* within a
-// session (it travels with query_source main/subagent/auxiliary and with
-// skill.name), not the fleet member running the agent. Carrying it through under
-// a name containing "agent" invites exactly the reading that it identifies which
+// ⚠️ The rename is the point. Claude Code's agent.name is the *subagent* within
+// a session, not the fleet member running the agent. Carrying it through under a
+// name containing "agent" invites exactly the reading that it identifies which
 // machine produced the record, which it does not. Instance is that, and it comes
 // from the resource.
+//
+// Measured rather than inferred: against a live agent (2.1.258) driven through a
+// subagent, agent.name arrived as "Explore" — the subagent's name — and appeared
+// only on records whose query_source was "agent:builtin:Explore". It is absent
+// entirely from a session that delegates to no subagent.
 const AttrSubagentName = "claude_code.subagent.name"
 
 // Resource attribute keys the instance identity is resolved from.

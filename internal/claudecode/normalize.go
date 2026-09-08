@@ -279,11 +279,20 @@ func numberValue(dp numberDataPoint) any {
 // floatAttr reads a numeric attribute, accepting either OTLP numeric form and a
 // numeric string.
 //
-// ⚠️ The string case is not defensive padding. A live agent (2.1.258) emits
-// duration_ms as an int on some events and as a string on others, within one
-// session. Accepting only the numeric forms drops the duration on the string
-// ones — and drops it silently, since an unreported duration is a legitimate
-// state that records nothing.
+// The string case exists because a live agent (2.1.258) types the same
+// attribute differently by event: duration_ms arrives as a string on
+// tool_result and mcp_server_connection, and as an int on api_request and
+// subagent_completed.
+//
+// ⚠️ Scoped honestly: on api_request — the only event this adapter parses
+// numerics from — duration_ms was an int in every sample captured, across two
+// independent captures. So for the field as currently read, the string branch is
+// precaution rather than a fix for observed loss. It is kept because the typing
+// is demonstrably per-event rather than per-attribute, so a new event promoted
+// to the measurement path could arrive typed either way, and because the
+// alternative failure is silent: an unreported duration records nothing, which
+// is a legitimate state and therefore indistinguishable from a parse that
+// declined.
 func floatAttr(attrs []*commonpb.KeyValue, key string) (float64, bool) {
 	for _, kv := range attrs {
 		if kv.GetKey() != key {
