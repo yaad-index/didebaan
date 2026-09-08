@@ -11,7 +11,7 @@
 // parsing and wiring only; the logic lives in internal/.
 //
 // Configuration flags are global and precede the command,
-// e.g. `didebaan --otlp-endpoint localhost:4317 --otlp-insecure collect`.
+// e.g. `didebaan --otlp-endpoint localhost:4319 --otlp-insecure collect`.
 package main
 
 import (
@@ -25,6 +25,7 @@ import (
 
 	"github.com/yaad-index/didebaan/internal/adapter"
 	"github.com/yaad-index/didebaan/internal/exporter"
+	"github.com/yaad-index/didebaan/internal/receiver"
 
 	// Input adapters register themselves on import (ADR 0003). Add a blank
 	// import here to compile a new agent's adapter into the binary.
@@ -41,8 +42,15 @@ type CLI struct {
 
 	// Collector configuration (global; file < env < flag).
 	Adapter      string `help:"Input adapter to collect from (see 'didebaan adapters')." default:"claude-code"`
-	OTLPEndpoint string `name:"otlp-endpoint" help:"OTLP/gRPC endpoint (host:port). Empty uses the OpenTelemetry env defaults." placeholder:"HOST:PORT"`
+	OTLPEndpoint string `name:"otlp-endpoint" help:"Downstream OTLP/gRPC endpoint (host:port) to export to. Empty uses the OpenTelemetry env defaults, which resolve to localhost:4317 — the receiver's own port." placeholder:"HOST:PORT"`
 	OTLPInsecure bool   `name:"otlp-insecure" help:"Use plaintext gRPC instead of TLS (e.g. a local collector on loopback)."`
+
+	// Receiver configuration. The conventional OTLP ports belong to the
+	// receiver rather than to the downstream exporter: an agent pointed at its
+	// own default endpoint has to find the collector with no extra
+	// configuration (ADR 0008).
+	ReceiverGRPC string `name:"receiver-grpc" help:"Address the embedded OTLP/gRPC receiver listens on. Empty disables it." default:"127.0.0.1:4317" placeholder:"HOST:PORT"`
+	ReceiverHTTP string `name:"receiver-http" help:"Address the embedded OTLP/HTTP receiver listens on. Empty disables it." default:"127.0.0.1:4318" placeholder:"HOST:PORT"`
 
 	Collect  CollectCmd  `cmd:"" help:"Collect telemetry from an agent and export it over OTLP."`
 	Adapters AdaptersCmd `cmd:"" help:"List the input adapters compiled into this binary."`
@@ -64,6 +72,25 @@ func (*CollectCmd) Run(cli *CLI) error {
 		return err
 	}
 
+	// The adapter has to be able to receive before anything else is built: an
+	// adapter that reads its agent some other way would leave the receiver with
+	// no consumer, and every arriving record unclaimed.
+	consumer, ok := ad.(receiver.Consumer)
+	if !ok {
+		return fmt.Errorf("adapter %q does not ingest from the OTLP receiver", ad.Name())
+	}
+
+	rcvCfg := receiver.Config{GRPCAddr: cli.ReceiverGRPC, HTTPAddr: cli.ReceiverHTTP}
+
+	// Refuse to start when the resolved export endpoint is one of our own
+	// listening addresses, which would export every received record straight
+	// back into the receiver (ADR 0008 §3). This runs before the exporter is
+	// built so the refusal is the first thing that happens, at the one moment
+	// someone is watching.
+	if err := receiver.CheckNoSelfExport(rcvCfg.ListenAddrs(), receiver.ResolveExportEndpoints(cli.OTLPEndpoint)); err != nil {
+		return err
+	}
+
 	providers, err := exporter.New(ctx, exporter.Config{
 		Endpoint:       cli.OTLPEndpoint,
 		Insecure:       cli.OTLPInsecure,
@@ -78,18 +105,46 @@ func (*CollectCmd) Run(cli *CLI) error {
 		_ = providers.Shutdown(context.Background())
 	}()
 
-	fmt.Fprintf(os.Stderr, "didebaan: collecting from %q, exporting over OTLP\n", ad.Name())
-
 	// The sink is where normalized events become OTel signals (traces, metrics,
-	// logs). The stub adapter emits nothing yet, so this simply blocks until
-	// interrupted.
+	// logs).
 	sink, err := newSink(providers)
 	if err != nil {
 		return fmt.Errorf("wire sink: %w", err)
 	}
-	if err := ad.Run(ctx, sink); err != nil && ctx.Err() == nil {
+
+	rcv, err := receiver.New(rcvCfg, providers.Meter.Meter(instrumentationScope), consumer)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "didebaan: collecting from %q, receiving OTLP on %v, exporting over OTLP\n",
+		ad.Name(), rcvCfg.ListenAddrs())
+
+	// The adapter installs the sink and holds it for the receiver's lifetime, so
+	// it has to be running before the receiver accepts anything. Both stop on
+	// ctx; the receiver additionally needs its own Shutdown to unblock Serve.
+	adapterErr := make(chan error, 1)
+	go func() { adapterErr <- ad.Run(ctx, sink) }()
+
+	go func() {
+		<-ctx.Done()
+		// A fresh context: ctx is already cancelled by the time we get here.
+		_ = rcv.Shutdown(context.Background())
+	}()
+
+	if err := rcv.Start(ctx); err != nil {
+		return fmt.Errorf("receiver: %w", err)
+	}
+	if err := <-adapterErr; err != nil && ctx.Err() == nil {
 		return fmt.Errorf("adapter %q: %w", ad.Name(), err)
 	}
+
+	st := rcv.Stats()
+	_, _ = fmt.Fprintf(os.Stderr,
+		"didebaan: received %d metrics (%d unclaimed), %d log records (%d unclaimed), ignored %d spans\n",
+		st.MetricsClaimed.Load(), st.MetricsUnclaimed.Load(),
+		st.LogsClaimed.Load(), st.LogsUnclaimed.Load(),
+		st.SpansIgnored.Load())
 	return nil
 }
 
