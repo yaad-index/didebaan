@@ -24,7 +24,7 @@ Didebaan reads an agent's activity and exports it over OTLP to a downstream
 collector. Point it at your collector's OTLP/gRPC endpoint:
 
 ```sh
-didebaan --otlp-endpoint localhost:4317 --otlp-insecure collect
+didebaan --otlp-endpoint localhost:4319 --otlp-insecure collect
 ```
 
 Use `--otlp-insecure` only for a local collector on the loopback interface; drop
@@ -46,9 +46,20 @@ A container image is published to GHCR on each release:
 
 ```sh
 docker run --rm \
-  -e DIDEBAAN_OTLP_ENDPOINT=host.docker.internal:4317 \
+  -e DIDEBAAN_RECEIVER_GRPC=0.0.0.0:4317 \
+  -e DIDEBAAN_RECEIVER_HTTP=0.0.0.0:4318 \
+  -p 127.0.0.1:4317:4317 \
+  -p 127.0.0.1:4318:4318 \
+  -e DIDEBAAN_OTLP_ENDPOINT=host.docker.internal:4319 \
   ghcr.io/yaad-index/didebaan:latest
 ```
+
+⚠️ **The receiver addresses have to be overridden in a container.** The default
+`127.0.0.1` is loopback *inside the container's own network namespace*, which no
+agent on the host can reach — the collector would start cleanly, listen, and
+receive nothing. Bind `0.0.0.0` inside and narrow the exposure with the
+`-p 127.0.0.1:…` publish addresses, so the socket is still only reachable from
+the host rather than from the network.
 
 The image runs `didebaan collect` as a non-root user by default. Nothing is
 baked into the image — supply configuration via env or a mounted config file.

@@ -24,6 +24,22 @@ type Event struct {
 	// event, not of the process. Downstream consumers group telemetry by it.
 	Agent string
 
+	// Instance identifies which running agent produced the activity — the
+	// fleet member, not the kind of agent. Agent above says "claude-code" for
+	// every machine running Claude Code; Instance is what separates one of them
+	// from another, and it is the dimension a per-agent liveness view is built
+	// on.
+	//
+	// It comes from the OpenTelemetry Resource (service.instance.id, falling
+	// back to service.name), because no agent's own telemetry carries it: an
+	// agent has no concept of the fleet it belongs to. Operators set it per host
+	// through OTEL_RESOURCE_ATTRIBUTES.
+	//
+	// It is deliberately bounded — one value per running collector — which is
+	// what makes it safe as a metric dimension. See [Event.Attributes] for the
+	// unbounded identifiers that stay off the dimension list.
+	Instance string
+
 	// System is the GenAI system (gen_ai.system), e.g. "anthropic".
 	System string
 
@@ -46,11 +62,29 @@ type Event struct {
 	// means unknown.
 	Duration time.Duration
 
+	// CostUSD is what the operation cost, in US dollars, or nil if the agent
+	// did not report a cost. The GenAI semantic conventions define no cost
+	// metric, so this is emitted in Didebaan's own namespace (ADR 0008 §5)
+	// rather than under a gen_ai.* name that upstream may later define
+	// differently.
+	CostUSD *float64
+
 	// Attributes carries any additional gen_ai.* (or agent-specific) key/values
 	// the adapter captured but that have no dedicated field. Keys should be the
 	// fully-qualified attribute names (e.g. "gen_ai.request.temperature").
+	//
+	// ⚠️ Attributes reach spans and log records but deliberately never become
+	// metric dimensions: an unbounded value here (a session id, a request id)
+	// would multiply metric series without limit, and the resulting cost lands
+	// on the downstream time-series database long after the change that caused
+	// it. Anything that must be a dimension needs a field of its own, and needs
+	// to be bounded to earn it.
 	Attributes map[string]any
 }
+
+// Dollars returns a pointer to n, for setting a known [Event.CostUSD]. A genuine
+// zero is Dollars(0); leave the field nil to mean "unreported".
+func Dollars(n float64) *float64 { return &n }
 
 // Usage is per-operation token accounting, mapping to the gen_ai.usage.*
 // attributes. Each count is a pointer so that "unreported" (nil) is distinct

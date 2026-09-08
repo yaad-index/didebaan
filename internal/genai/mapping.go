@@ -38,6 +38,24 @@ const (
 	// agent. It is not part of the gen_ai.* set; it lets downstream consumers
 	// group telemetry by which agent produced it (ADR 0003).
 	AttrAgent = "didebaan.agent"
+
+	// AttrInstance identifies which running agent produced the activity, as
+	// opposed to which kind of agent AttrAgent names. It is the dimension that
+	// makes per-agent recency answerable: without it every machine's telemetry
+	// aggregates into one indistinguishable series, which looks like a working
+	// pipeline and answers no question about who is doing what.
+	//
+	// Safe as a dimension because it is bounded by the number of running
+	// collectors. Contrast the unbounded identifiers (session ids, request ids)
+	// that stay in the event's Attributes and never reach a metric.
+	AttrInstance = "didebaan.instance"
+
+	// AttrCostUSD carries an operation's cost on a span or log record. It is a
+	// separate name from MetricCost for the same reason the token attributes
+	// are separate names from the token-usage instrument: an attribute
+	// describes one operation, an instrument accumulates across many, and
+	// giving them one name makes a query ambiguous about which it meant.
+	AttrCostUSD = "didebaan.cost.usd"
 )
 
 // GenAI metric-instrument names, from the OpenTelemetry GenAI metric
@@ -47,6 +65,18 @@ const (
 const (
 	MetricTokenUsage = "gen_ai.client.token.usage"
 	MetricOpDuration = "gen_ai.client.operation.duration"
+
+	// MetricCost is Didebaan's cost metric. The GenAI conventions define no
+	// cost metric, and the ad-hoc name in common use sits *inside* the
+	// gen_ai.* namespace — so adopting it would squat on a name upstream may
+	// define differently. This sits in Didebaan's own namespace instead
+	// (ADR 0008 §5).
+	//
+	// When a standard cost metric exists, Didebaan emits the standard name.
+	// Pre-1.0 this name may be dropped in any minor release with a changelog
+	// entry, since minor is the breaking vehicle before 1.0; post-1.0 it is
+	// kept as an alias for one minor cycle.
+	MetricCost = "didebaan.cost.usage"
 )
 
 // tokenType values for AttrTokenType.
@@ -64,13 +94,22 @@ type kv struct {
 }
 
 // dimensionPairs are the low-cardinality descriptive attributes safe to use as
-// metric dimensions: which agent, system, operation, and models. They
-// deliberately exclude token counts (the measured values) and the free-form
-// Attributes map (which may be high-cardinality, e.g. temperature).
+// metric dimensions: which agent kind, which running instance, system,
+// operation, and models. They deliberately exclude token counts (the measured
+// values) and the free-form Attributes map, which may be high-cardinality — a
+// session id or a request id there would multiply series without bound.
+//
+// Every field admitted here has to be bounded by something structural: the
+// number of agent kinds, of running collectors, of models. "Probably small in
+// practice" is not the test, because the cost of being wrong is paid downstream
+// and long after.
 func dimensionPairs(e didebaan.Event) []kv {
-	ps := make([]kv, 0, 5)
+	ps := make([]kv, 0, 6)
 	if e.Agent != "" {
 		ps = append(ps, kv{AttrAgent, e.Agent})
+	}
+	if e.Instance != "" {
+		ps = append(ps, kv{AttrInstance, e.Instance})
 	}
 	if e.System != "" {
 		ps = append(ps, kv{AttrSystem, e.System})
@@ -98,6 +137,9 @@ func pairs(e didebaan.Event) []kv {
 	}
 	if e.Usage.OutputTokens != nil {
 		ps = append(ps, kv{AttrUsageOutput, *e.Usage.OutputTokens})
+	}
+	if e.CostUSD != nil {
+		ps = append(ps, kv{AttrCostUSD, *e.CostUSD})
 	}
 	for k, v := range e.Attributes {
 		ps = append(ps, kv{k, v})
@@ -154,6 +196,7 @@ func SpanName(e didebaan.Event) string {
 type Instruments struct {
 	tokenUsage metric.Int64Histogram
 	opDuration metric.Float64Histogram
+	cost       metric.Float64Counter
 }
 
 // NewInstruments creates the GenAI instruments on m.
@@ -174,14 +217,28 @@ func NewInstruments(m metric.Meter) (*Instruments, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", MetricOpDuration, err)
 	}
-	return &Instruments{tokenUsage: tokenUsage, opDuration: opDuration}, nil
+	// Cost is a counter rather than a histogram: the question asked of it is
+	// "how much has this instance spent", which is a sum over time. A
+	// distribution of per-operation costs is a different question, and one the
+	// token-usage histogram already answers in the dimension that drives it.
+	cost, err := m.Float64Counter(
+		MetricCost,
+		metric.WithUnit("{USD}"),
+		metric.WithDescription("Cost attributed to GenAI operations, in US dollars."),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", MetricCost, err)
+	}
+	return &Instruments{tokenUsage: tokenUsage, opDuration: opDuration, cost: cost}, nil
 }
 
 // Record maps an event onto the metric signals: a token-usage measurement for
-// each reported direction (tagged input/output) and, when the duration is
-// known, an operation-duration measurement. Measurements carry only the
-// low-cardinality dimension attributes. Unreported token counts and an unknown
-// (zero) duration record nothing.
+// each reported direction (tagged input/output), an operation-duration
+// measurement when the duration is known, and a cost contribution when the agent
+// reported one. Measurements carry only the low-cardinality dimension
+// attributes. Unreported token counts, an unreported cost, and an unknown (zero)
+// duration all record nothing — an event that knows less says less, rather than
+// asserting a false zero.
 func (in *Instruments) Record(ctx context.Context, e didebaan.Event) {
 	dims := DimensionAttributes(e)
 
@@ -197,6 +254,9 @@ func (in *Instruments) Record(ctx context.Context, e didebaan.Event) {
 	}
 	if e.Duration > 0 {
 		in.opDuration.Record(ctx, e.Duration.Seconds(), metric.WithAttributes(dims...))
+	}
+	if e.CostUSD != nil {
+		in.cost.Add(ctx, *e.CostUSD, metric.WithAttributes(dims...))
 	}
 }
 

@@ -12,7 +12,7 @@ adapter: claude-code
 
 # OTLP/gRPC endpoint of the downstream collector (host:port). Leave empty to
 # fall back to the OpenTelemetry SDK's OTEL_EXPORTER_OTLP_* env defaults.
-otlp-endpoint: localhost:4317
+otlp-endpoint: localhost:4319
 
 # Use plaintext gRPC instead of TLS. Suitable only for a local collector on the
 # loopback interface; keep false when the endpoint is remote.

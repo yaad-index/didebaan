@@ -57,7 +57,7 @@ end to end.
 ```sh
 go build ./cmd/didebaan
 ./didebaan adapters                                  # list available adapters
-./didebaan --otlp-endpoint localhost:4317 --otlp-insecure collect
+./didebaan --otlp-endpoint localhost:4319 --otlp-insecure collect
 ```
 
 See [INSTALL.md](INSTALL.md) for building and running (including Docker) and
