@@ -107,17 +107,18 @@ func (a *Adapter) Name() string { return Name }
 // Claim declares the telemetry this adapter takes responsibility for
 // (ADR 0008 §2).
 //
-// ⚠️ It departs from the ADR's rule that "metrics and logs are claimed by
-// namespace prefix". Verified against a live agent (2.1.258): metrics do carry
-// the claude_code.* prefix, but log events carry no namespace at all —
-// "api_request", "user_prompt", "assistant_response", "mcp_server_connection".
-// A namespace claim over those matches nothing.
+// ⚠️ Verified against a live agent (2.1.258): metrics do carry the claude_code.*
+// prefix, but log events carry no namespace at all — "api_request",
+// "user_prompt", "assistant_response", "mcp_server_connection". A namespace
+// claim over those matches nothing, and the event path is where token and cost
+// figures live, so a prefix-only claim loses them while every ingest counter
+// still reads healthy.
 //
 // Claiming them by their bare names instead would be worse than losing them:
 // "api_request" is a name any agent might emit, so this adapter would start
 // normalizing another agent's events with Claude Code's rules. The scope is what
-// actually identifies the emitter, so the claim leans on that and the ADR needs
-// its §2 rule widened to say so.
+// actually identifies the emitter, so the claim leans on that. ADR 0008 §2 was
+// widened to this rule after the measurement above disproved the original one.
 //
 // SpanScopes is empty because v1 does not ingest the agent's own span tree —
 // those spans are beta in the agent and behind a separate opt-in there, so their

@@ -42,12 +42,50 @@ func (f *fakeConsumer) ConsumeLog(_ context.Context, rec LogRecord) error {
 	return nil
 }
 
+// newTestReceiver builds a receiver around one consumer, bypassing New's claim
+// validation.
+//
+// The bypass is deliberate. New refuses a claim that declares no ScopePrefixes
+// (ADR 0008 §2), but the dispatch tests below need exactly such a claim: the
+// reason the rule exists is that a name-prefix claim silently matches nothing,
+// and that is a property of dispatch, not of construction. Routing it through
+// New would make the negative untestable and leave the rule asserted only in
+// prose. The validation itself is covered by
+// TestNewRefusesAClaimWithoutScopePrefixes.
 func newTestReceiver(t *testing.T, claim didebaan.Claim) (*Receiver, *fakeConsumer) {
 	t.Helper()
 	c := &fakeConsumer{claim: claim}
-	r, err := New(Config{GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"}, noop.NewMeterProvider().Meter("test"), c)
+	r, err := New(
+		Config{GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"},
+		noop.NewMeterProvider().Meter("test"),
+		&scopedConsumer{Consumer: c},
+	)
 	require.NoError(t, err)
+	// Swap the real claim back in now that construction has passed.
+	r.consumers = []Consumer{c}
 	return r, c
+}
+
+// scopedConsumer satisfies New's validation without changing what the wrapped
+// consumer claims once dispatch begins.
+type scopedConsumer struct{ Consumer }
+
+func (scopedConsumer) Claim() didebaan.Claim {
+	return didebaan.Claim{ScopePrefixes: []string{"test.scope"}}
+}
+
+// TestNewRefusesAClaimWithoutScopePrefixes covers the rule ADR 0008 §2 states.
+//
+// It is validated rather than documented because the failure is silent: a
+// prefix-only claim dispatches correctly for as long as the agent namespaces
+// everything, and stops matching the moment it meets one that does not. The
+// records then count as unclaimed while every health counter stays green.
+func TestNewRefusesAClaimWithoutScopePrefixes(t *testing.T) {
+	c := &fakeConsumer{claim: didebaan.Claim{MetricPrefixes: []string{"claude_code."}}}
+	_, err := New(Config{GRPCAddr: "127.0.0.1:0"}, noop.NewMeterProvider().Meter("test"), c)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ScopePrefixes")
+	assert.Contains(t, err.Error(), "fake", "the error must name the offending adapter")
 }
 
 func postProto(t *testing.T, h http.HandlerFunc, msg proto.Message) *httptest.ResponseRecorder {
