@@ -23,7 +23,12 @@ const (
 // to when neither configuration nor environment names one. It is the reason an
 // empty export endpoint is not a safe value: it resolves to the same conventional
 // port the receiver listens on by default.
-const sdkDefaultEndpoint = "localhost:4317"
+const sdkDefaultEndpoint = "localhost:" + defaultGRPCPort
+
+// defaultGRPCPort is the conventional OTLP/gRPC port, and the port an endpoint
+// with no explicit one resolves to. It is not conditional on the URL scheme: see
+// hostPort.
+const defaultGRPCPort = "4317"
 
 // ResolveExportEndpoints returns the OTLP/gRPC endpoints the three signal
 // exporters will actually use, given the endpoint configured in-process
@@ -71,12 +76,19 @@ func hostPort(endpoint string) string {
 		return endpoint
 	}
 	if u.Port() == "" {
-		// A scheme-only URL leaves the port implicit; the OTLP defaults are
-		// the conventional ports for the scheme.
-		if u.Scheme == "https" {
-			return net.JoinHostPort(u.Hostname(), "4318")
-		}
-		return net.JoinHostPort(u.Hostname(), "4317")
+		// A URL with no explicit port leaves it to the transport's default.
+		//
+		// ⚠️ That default is 4317 whatever the scheme. The scheme selects TLS
+		// (http vs https); the port distinguishes the OTLP transports (4317
+		// gRPC, 4318 HTTP). Deriving 4318 from "https" conflates the two, and
+		// it fails in the dangerous direction: this project's exporters are
+		// gRPC-only, so the real connection goes to 4317, and a guard that
+		// computed 4318 would compare the wrong address and miss a genuine
+		// loop rather than raise a false alarm.
+		//
+		// If an OTLP/HTTP exporter is ever added here, this has to become a
+		// function of the configured transport rather than a constant.
+		return net.JoinHostPort(u.Hostname(), defaultGRPCPort)
 	}
 	return u.Host
 }

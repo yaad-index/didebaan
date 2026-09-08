@@ -116,3 +116,33 @@ func TestConfiguredEndpointOverridesEnvironment(t *testing.T) {
 	}
 	require.NoError(t, CheckNoSelfExport([]string{"127.0.0.1:4317"}, endpoints))
 }
+
+// TestSchemeQualifiedEndpointDefaultsToTheGRPCPort covers an endpoint given as a
+// URL with no explicit port.
+//
+// The scheme selects TLS; the port distinguishes the OTLP transports. Deriving
+// 4318 from "https" conflates them, and this project's exporters are gRPC-only,
+// so the real connection goes to 4317 regardless. The failure direction is what
+// makes it worth a test: a guard resolving the wrong port compares the wrong
+// address and misses a real loop, rather than raising a false alarm someone
+// would notice.
+func TestSchemeQualifiedEndpointDefaultsToTheGRPCPort(t *testing.T) {
+	for _, scheme := range []string{"http", "https"} {
+		t.Run(scheme, func(t *testing.T) {
+			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", scheme+"://localhost")
+			t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+			t.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "")
+			t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
+
+			endpoints := ResolveExportEndpoints("")
+			for signal, ep := range endpoints {
+				assert.Equal(t, "localhost:4317", ep, "signal %s", signal)
+			}
+
+			// With the HTTP receiver disabled, only a correctly resolved port
+			// catches this loop.
+			require.Error(t, CheckNoSelfExport([]string{"127.0.0.1:4317"}, endpoints),
+				"the gRPC exporter reaches :4317, which is the receiver's own address")
+		})
+	}
+}
