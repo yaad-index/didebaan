@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/yaad-index/didebaan/compare/v0.2.0...v0.2.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* stamp the image's own version, test before publishing, check releases advance ([#25](https://github.com/yaad-index/didebaan/issues/25)) ([bef01ab](https://github.com/yaad-index/didebaan/commit/bef01abfadee69586b774734649bba1df084a794))
+
 ## [0.2.0](https://github.com/yaad-index/didebaan/compare/v0.1.0...v0.2.0) (2026-09-08)
 
 
