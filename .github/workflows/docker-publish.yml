@@ -25,7 +25,14 @@ permissions:
   packages: write
 
 jobs:
+  # The test suite on the commit being published. Nothing is published unless
+  # it passes: the release tag is cut from a squash commit that the pull
+  # request's run never covered.
+  test:
+    uses: ./.github/workflows/ci.yml
+
   publish:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -55,6 +62,38 @@ jobs:
             # Don't move :latest onto a pre-release (e.g. v0.1.0-rc.1).
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') && !contains(inputs.tag, '-') }}
 
+      # Build once without pushing and run the result, so an image whose binary
+      # does not report the version it is tagged with is never published.
+      # VERSION is the metadata step's own version output: the same string the
+      # image is tagged with, not a second expression that has to agree with it.
+      - name: Build for the version check
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: didebaan:version-check
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+
+      - name: Check the image reports the version it is tagged with
+        env:
+          WANT: ${{ steps.meta.outputs.version }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          got="$(docker run --rm didebaan:version-check version)"
+          if [ "$got" != "$WANT" ]; then
+            echo "the built binary reports '$got', the image is tagged '$WANT'"
+            exit 1
+          fi
+          if ! grep -qxF "ghcr.io/yaad-index/didebaan:$WANT" <<<"$TAGS"; then
+            echo "no pushed tag carries $WANT; tags are:"
+            echo "$TAGS"
+            exit 1
+          fi
+          echo "binary reports $got, matching the image tag"
+
       - name: Build and push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -62,10 +101,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Stamp the binary's `version`: prefer the manual `tag` input, else
-          # fall back to the ref (the tag on a tag push). Mirrors the image-tag
-          # logic so the binary version and the image tag never disagree.
           build-args: |
-            VERSION=${{ inputs.tag || github.ref_name }}
+            VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

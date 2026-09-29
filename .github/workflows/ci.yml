@@ -1,8 +1,15 @@
 name: CI
 
+# Runs on the pull request, on the push that lands it (a squash onto a base that
+# has moved is a combination the pull request's run never covered), and as a
+# reusable workflow that publish-image calls on the release tag before it
+# builds, so the published image and a passing test run share a commit.
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
@@ -47,3 +54,23 @@ jobs:
         # -race: the registry and adapters are exercised concurrently, so the
         # gate runs the race detector.
         run: go test -race ./...
+
+  # On a release PR, the proposed version must be strictly greater than the
+  # latest release tag. A stuck pin or a manifest out of sync with the tags
+  # produces a release PR that looks normal and passes every other check.
+  release-version:
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-please--')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check the release advances the version
+        run: |
+          proposed="$(jq -r '."."' .release-please-manifest.json)"
+          # versionsort.suffix puts a pre-release below its own release.
+          latest="$(git -c versionsort.suffix=- tag -l 'v*' --sort=-v:refname | head -1)"
+          .github/scripts/check-release-advances.sh "$proposed" "${latest#v}"
